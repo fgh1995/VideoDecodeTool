@@ -1,0 +1,29 @@
+<Window x:Class="VideoDecodeTool.Views.StopTranscodeDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="停止转码"
+        SizeToContent="WidthAndHeight"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppBackgroundBrush}"
+        Foreground="{StaticResource TextBrush}">
+
+    <Border Style="{StaticResource Panel}" Padding="16" Width="440">
+        <StackPanel>
+            <TextBlock Text="停止转码 · 已转码的部分如何处理？" Style="{StaticResource SectionTitle}" />
+
+            <TextBlock Style="{StaticResource DimText}" TextWrapping="Wrap" Margin="0,10,0,16">
+                <Run Text="取消：" /><Run Text="不停止，继续转码。" /><LineBreak />
+                <Run Text="停止并封装已转码：" /><Run Text="把已转码部分重封装为标准 MP4 保存下来。" /><LineBreak />
+                <Run Text="停止并删除：" /><Run Text="删除已转码的临时文件，不产出任何输出。" />
+            </TextBlock>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="取消" MinWidth="72" Margin="0,0,8,0" Click="OnContinueClick" />
+                <Button Content="停止并封装已转码" MinWidth="140" Margin="0,0,8,0" Click="OnKeepClick" />
+                <Button Content="停止并删除" MinWidth="96" Click="OnDeleteClick" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

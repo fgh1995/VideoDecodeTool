@@ -1,0 +1,57 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- LiveCharts2 rc5 的 WPF 包只提供 net8.0-windows10.0.19041 目标组，故 TFM 必须声明平台版本 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- 通过 SupportedOSPlatformVersion 把运行时下限拉回 Windows 10 1607 (14393) -->
+    <SupportedOSPlatformVersion>10.0.14393.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- 只固定目标架构为 x64；不设置 <Platforms>，避免解决方案构建把输出放到 bin\x64\ 下造成路径不一致 -->
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- 只保留 Windows x64 原生库：SkiaSharp/OpenTK 等跨平台包默认会带上
+         linux/osx/win-x86/win-arm64 的 runtimes 载荷，本工程用不到，全部裁掉 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RootNamespace>VideoDecodeTool</RootNamespace>
+    <AssemblyName>VideoDecodeTool</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <NeutralLanguage>zh-CN</NeutralLanguage>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    依赖版本说明（务必阅读 README.md 的“依赖版本偏离说明”）：
+      LiveChartsCore.SkiaSharpView.WPF 2.0.0-rc5 的 nuspec 硬性要求 SkiaSharp.Views.WPF >= 3.116.1，
+      因此 SkiaSharp 无法停留在需求文档中的 2.88.6，必须提升到 3.116.1（API 向下兼容，仅文本相关 API 有变化）。
+  -->
+  <ItemGroup>
+    <PackageReference Include="FFmpeg.AutoGen" Version="6.0.0" />
+    <PackageReference Include="SkiaSharp" Version="3.116.1" />
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="3.116.1" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.0-rc5" />
+    <PackageReference Include="System.Text.Json" Version="8.0.0" />
+  </ItemGroup>
+
+  <!--
+    原生资源部署约定（扁平布局：DLL 与 exe 同目录）：
+      ffmpeg/*.dll  -> FFmpeg 6.0 共享库（avcodec-60 / avformat-60 / avutil-58 / swscale-7 / swresample-4 ...）
+                       ffmpeg.RootPath 指向这里，供 FFmpeg.AutoGen 解码
+      ffmpeg/*.exe  -> FFmpeg 6.0 的 ffmpeg.exe / ffprobe.exe（动态链接版）
+                       与 DLL 同目录，Windows 才能解析它们的导入表；用于转码与探测
+
+    注意：不要把「静态构建」的 ffmpeg.exe 放进 ffmpeg/bin/，
+    否则 NativeLibraryLocator 的查找顺序会让它优先于这里的动态版本。
+  -->
+  <ItemGroup>
+    <None Include="ffmpeg\*.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="ffmpeg\*.exe" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
