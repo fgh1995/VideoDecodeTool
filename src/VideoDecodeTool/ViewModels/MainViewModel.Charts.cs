@@ -324,6 +324,58 @@ public sealed partial class MainViewModel
     private double _qpAxisMax = 1;
 
     /// <summary>
+    /// 数值行 Y 轴量程上限的「当前（已缓动）值」：峰值进出窗口会让目标上限忽高忽低，
+    /// 若每帧硬切，整行柱体就会跟着剧烈缩放抖动。缓动后柱体缩放连续平滑。
+    /// </summary>
+    private double _bitrateAxisMax = 1;
+    private double _motionAxisMax = 1;
+    private double _gopAxisMax = 1;
+    private double _reorderAxisMax = 1;
+
+    /// <summary>QP 行 Y 轴上下限的当前（已缓动）值。</summary>
+    private double _qpAxisMinEased;
+    private double _qpAxisMaxEased = 1;
+
+    /// <summary>量程缓动系数：每个显示帧向目标逼近的比例（约 5~6 帧收敛，≈100ms 时间常数）。</summary>
+    private const double AxisEaseFactor = 0.2;
+
+    /// <summary>
+    /// 滑动窗口中心的指数平滑系数：把「阶梯式前进」的主时钟滤成连续滚动，消除横向抖动。
+    /// 主时钟（音频时钟）每收到一批音频样本才跳一次（约 20~40ms 一跳），
+    /// 直接用它驱动窗口会让图表每 20~40ms 突跳一次（左右抖）；平滑后每帧只逼近一点，匀速左滚。
+    /// </summary>
+    private const double ChartScrollSmoothing = 0.2;
+
+    /// <summary>上一渲染帧使用的播放头时间（秒），用于判断窗口是否真的移动了（脏检查）。</summary>
+    private double _lastChartPlayhead = -1;
+
+    /// <summary>
+    /// 图表滑动窗口当前的播放头时间（秒，已指数平滑）。供 View 对齐播放头覆盖层，
+    /// 使竖线与柱状图用同一套平滑值，两者一起匀速移动、不会各跳各的。
+    /// </summary>
+    public double ChartPlayheadSeconds => _smoothPlayhead >= 0
+        ? _smoothPlayhead
+        : (_pipeline?.Clock.PositionSeconds ?? 0);
+
+    /// <summary>经指数平滑后的图表播放头时间（秒）；&lt;0 表示尚未初始化（下一帧直接锚定到真实时钟）。</summary>
+    private double _smoothPlayhead = -1;
+
+    /// <summary>
+    /// 量程缓动：新峰值出现时<b>立即顶上去</b>（避免尖峰被量程裁掉并露出空白），
+    /// 回落时<b>逐帧缓降</b>，使柱体缩放不再每帧硬跳。
+    /// </summary>
+    private static double EaseAxis(double current, double target, double factor)
+    {
+        if (target >= current)
+        {
+            return target;
+        }
+
+        var next = current + (target - current) * factor;
+        return Math.Abs(next - target) < 0.01 ? target : next;
+    }
+
+    /// <summary>
     /// QP 行播放头右侧的白色小方块位置：横向贴在播放头右边，纵向按本帧平均 QP
     /// 在 QP 量程里的比例换算成行内像素高度 —— 于是它始终压在那条 QP 曲线上。
     /// </summary>
@@ -444,6 +496,8 @@ public sealed partial class MainViewModel
             IgnoresBarPosition = true,
             Padding = 0,
             MaxBarWidth = SingleBarWidth,
+
+            AnimationsSpeed = TimeSpan.Zero,
         };
 
         // 柱底以下用**背景色**再画一根等宽柱把它擦掉（LiveCharts 的柱永远从轴底起画），
@@ -464,6 +518,8 @@ public sealed partial class MainViewModel
             // 各留一条发丝竖线（柱体下方看起来就是一片「虚格子」）。
             // 加宽后擦除柱的边缘完全包住本色柱的边缘；多擦的那一点落在柱间空隙里，本来也是空的。
             MaxBarWidth = SingleBarWidth + 2,
+
+            AnimationsSpeed = TimeSpan.Zero,
         };
 
         var qpAverageSeries = new LineSeries<DateTimePoint>
@@ -476,6 +532,8 @@ public sealed partial class MainViewModel
             // 0 = 逐点直连的折线：曲线不做任何平滑（含贝塞尔圆滑），
             // 幅度的每一次变化都是真实数据，不做圆滑过渡
             LineSmoothness = 0,
+
+            AnimationsSpeed = TimeSpan.Zero,
         };
 
         // QP 行不加高亮（实测反馈「QP 去掉高亮」）：
@@ -621,6 +679,8 @@ public sealed partial class MainViewModel
             IgnoresBarPosition = true,
             Padding = 0,
             MaxBarWidth = KeyFrameMarkerWidth,
+
+            AnimationsSpeed = TimeSpan.Zero,
         };
 
     /// <summary>
@@ -667,6 +727,11 @@ public sealed partial class MainViewModel
 
             // 柱宽是死值，不随控件尺寸变化（个别层需要略宽以包住下层边缘，由参数指定）
             MaxBarWidth = maxBarWidth,
+
+            // 关闭序列自带动画：图表更新已统一由渲染帧驱动（见 RenderCharts），
+            // 若留着 LiveCharts 的默认动画，每次强制 measure 都会重启一段过渡，
+            // 柱子/曲线就会拖影、与播放头/读数对不齐。平滑由「渲染帧同拍 + 量程缓动」提供。
+            AnimationsSpeed = TimeSpan.Zero,
         };
     }
 
@@ -731,6 +796,8 @@ public sealed partial class MainViewModel
         SeparatorsPaint = new SolidColorPaint(new SKColor(0xFF, 0xFF, 0xFF, 14)),
         ShowSeparatorLines = true,
         MinStep = 0.5,
+
+        AnimationsSpeed = TimeSpan.Zero,
     };
 
     /// <summary>
@@ -857,12 +924,12 @@ public sealed partial class MainViewModel
         // 用窗口内最大值而不是「有史以来的最大值」：历史峰值会把刻度永久撑高，
         // 之后的柱子全趴在底部、上方空一大片（实测反馈：BITRATE 看着和下面的图表没贴上）。
         // 峰值滚出窗口后刻度才会回落，所以它是缓的、不会每帧抖动。
-        var bitrateLimit = ResolveAxisLimit(WindowMax(minTicks, maxTicks, _bitrateIValues, _bitratePValues, _bitrateBValues));
-        var motionLimit = ResolveAxisLimit(WindowMax(minTicks, maxTicks, _motionForwardValues, _motionBackwardValues));
+        var bitrateLimit = _bitrateAxisMax = EaseAxis(_bitrateAxisMax, ResolveAxisLimit(WindowMax(minTicks, maxTicks, _bitrateIValues, _bitratePValues, _bitrateBValues)), AxisEaseFactor);
+        var motionLimit = _motionAxisMax = EaseAxis(_motionAxisMax, ResolveAxisLimit(WindowMax(minTicks, maxTicks, _motionForwardValues, _motionBackwardValues)), AxisEaseFactor);
         // GOP：紫柱整体压低（余量同其他高行），关键帧白柱单独拉满到接近行顶；
         // 重排：柱高压到约半行，看起来不那么压迫
-        var gopLimit = ResolveAxisLimit(WindowMax(minTicks, maxTicks, _gopValues), TallRowHeadroomRatio);
-        var reorderLimit = ResolveAxisLimit(WindowMax(minTicks, maxTicks, _reorderValues), ReorderHeadroomRatio);
+        var gopLimit = _gopAxisMax = EaseAxis(_gopAxisMax, ResolveAxisLimit(WindowMax(minTicks, maxTicks, _gopValues), TallRowHeadroomRatio), AxisEaseFactor);
+        var reorderLimit = _reorderAxisMax = EaseAxis(_reorderAxisMax, ResolveAxisLimit(WindowMax(minTicks, maxTicks, _reorderValues), ReorderHeadroomRatio), AxisEaseFactor);
 
         ApplyAxisRange(BitrateYAxes, bitrateLimit);
         ApplyAxisRange(MotionYAxes, motionLimit);
@@ -890,12 +957,15 @@ public sealed partial class MainViewModel
         // 上下限取**当前窗口内实际柱体的最低下沿 / 最高上沿**（与其它行同一套 WindowMax 思路）：
         // 早先用的是「只跟最新几帧、还带衰减的包络」，窗口里较早的那些高柱就会被裁掉上边
         // （实测反馈「QP 上边被裁掉了」）。按窗口取，画面里出现的柱子一定都在量程内。
-        var qpTopValue = WindowMax(minTicks, maxTicks, _qpBarValues);
-        var qpBottomValue = WindowMin(minTicks, maxTicks, _qpBarBottomValues);
-        var qpPadding = Math.Max(0.5, (qpTopValue - qpBottomValue) * 0.08);
+        var qpTopTarget = WindowMax(minTicks, maxTicks, _qpBarValues);
+        var qpBottomTarget = WindowMin(minTicks, maxTicks, _qpBarBottomValues);
+        var qpPadding = Math.Max(0.5, (qpTopTarget - qpBottomTarget) * 0.08);
 
-        _qpAxisMin = Math.Max(0, qpBottomValue - qpPadding);
-        _qpAxisMax = Math.Max(_qpAxisMin + 1, qpTopValue + qpPadding);
+        // 同样做缓动，避免 QP 行量程随窗口滑动每帧硬切
+        _qpAxisMinEased = EaseAxis(_qpAxisMinEased, Math.Max(0, qpBottomTarget - qpPadding), AxisEaseFactor);
+        _qpAxisMaxEased = EaseAxis(_qpAxisMaxEased, Math.Max(_qpAxisMinEased + 1, qpTopTarget + qpPadding), AxisEaseFactor);
+        _qpAxisMin = _qpAxisMinEased;
+        _qpAxisMax = _qpAxisMaxEased;
         ApplyAxisBand(QpYAxes, _qpAxisMin, _qpAxisMax);
 
         // 悬浮读数：数值图下沿固定 0（直接写在 XAML 里），QP 行上下沿都给。
@@ -1158,6 +1228,11 @@ public sealed partial class MainViewModel
         // 图内竖条只是视觉噪音（用户反馈「去掉图表默认的竖条」）
         SeparatorsPaint = showGrid ? new SolidColorPaint(new SKColor(0xFF, 0xFF, 0xFF, 14)) : null,
         ShowSeparatorLines = showGrid,
+
+        // 关闭坐标轴自带过渡动画：量程由我们自己的缓动/平滑精确控制，
+        // 若留着 LiveCharts 的默认动画，轴范围每次变更都会插值，
+        // 与渲染帧驱动的「每帧一更新」打架，反而产生横向/纵向抖动。
+        AnimationsSpeed = TimeSpan.Zero,
     };
 
     private static Axis CreateValueAxis(
@@ -1183,6 +1258,8 @@ public sealed partial class MainViewModel
         SeparatorsPaint = showSeparators
             ? new SolidColorPaint(new SKColor(0xFF, 0xFF, 0xFF, 14))
             : null,
+
+        AnimationsSpeed = TimeSpan.Zero,
     };
 
     /// <summary>
@@ -1298,21 +1375,21 @@ public sealed partial class MainViewModel
         Append(_reorderValues, x, sample.ReorderDelay);
     }
 
-    /// <summary>批量搬入新产生的帧采样点，并按时间窗口裁剪。</summary>
-    private void PumpChartSamples()
+    /// <summary>批量搬入新产生的帧采样点，并按时间窗口裁剪。返回实际搬入的采样点数。</summary>
+    private int PumpChartSamples()
     {
         var pipeline = _pipeline;
 
         if (pipeline is null)
         {
-            return;
+            return 0;
         }
 
         var count = pipeline.Charts.Drain(_pendingSamples, MaxSamplesPerTick);
 
         if (count == 0)
         {
-            return;
+            return 0;
         }
 
         for (var i = 0; i < count; i++)
@@ -1322,7 +1399,78 @@ public sealed partial class MainViewModel
 
         // 采样点按媒体时间递增，搬完统一裁剪一次
         TrimTimeline();
-        RequestChartsUpdate();
+        return count;
+    }
+
+    /// <summary>
+    /// 由视图的 <see cref="System.Windows.Media.CompositionTarget.Rendering"/> 在<b>每个显示帧</b>调用一次：
+    /// 把「搬运采样点 + 滑动时间轴窗口 + 触发 measure」合并到与屏幕刷新同拍的节拍里。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 之前这部分逻辑放在 15ms 的 <c>_previewTimer</c> 里，与 60Hz 的屏幕刷新不同步：
+    /// 有的显示帧里定时器触发两次、有的零次，图表滚动速度忽快忽慢（抖动）；
+    /// 而且窗口只在「取到新解码帧」时推进，24fps 的片源下表现为「卡一顿、跳一下」。
+    /// 改到渲染帧里执行后，每帧只更新一次、且用<b>连续时钟位置</b>驱动窗口，
+    /// 图表便以恒定速度平滑左滚。
+    /// </para>
+    /// </remarks>
+    public void RenderCharts()
+    {
+        var pipeline = _pipeline;
+
+        if (pipeline is null)
+        {
+            return;
+        }
+
+        // 1) 把解码线程攒下的采样点搬进静默集合（无新数据时返回 0，几乎零开销）
+        var newData = PumpChartSamples() > 0;
+
+        // 2) 用平滑后的连续位置驱动滑动窗口。
+        //    ⚠ 窗口中心必须用「与数据 X 轴同源」的时间：数据点的 X 就是各自 info.Time（PTS），
+        //    所以这里取当前正在显示的帧的 PTS（CurrentFrame.Time），而不是音频时钟 PositionSeconds。
+        //    边转边播时音频时钟会和 PTS 两套基准错位（解码缓冲会使时钟跑在/落后于已解码帧之前后），
+        //    若拿音频时钟当中心，最新数据（含重排）会被推出可视窗口右沿 → 「重排不见了」。
+        //    当前帧 PTS 本身是逐帧离散的（约 20~40ms 一跳），再用指数平滑滤成连续滚动，消除横向抖动。
+        var rawPlayhead = CurrentFrame?.Time ?? pipeline.Clock.PositionSeconds;
+
+        if (_smoothPlayhead < 0)
+        {
+            _smoothPlayhead = rawPlayhead;
+        }
+        else
+        {
+            _smoothPlayhead += (rawPlayhead - _smoothPlayhead) * ChartScrollSmoothing;
+        }
+
+        var playhead = _smoothPlayhead;
+        var playheadMoved = Math.Abs(playhead - _lastChartPlayhead) > 1e-6;
+        _lastChartPlayhead = playhead;
+
+        // 记录缓动前的量程，判断本轮是否仍在「缓降校正」中（收敛后即静止）
+        var b0 = _bitrateAxisMax;
+        var m0 = _motionAxisMax;
+        var g0 = _gopAxisMax;
+        var r0 = _reorderAxisMax;
+        var qMin0 = _qpAxisMinEased;
+        var qMax0 = _qpAxisMaxEased;
+
+        UpdateTimelineWindow(playhead);
+
+        var axisChanged = Math.Abs(_bitrateAxisMax - b0) > 1e-6
+            || Math.Abs(_motionAxisMax - m0) > 1e-6
+            || Math.Abs(_gopAxisMax - g0) > 1e-6
+            || Math.Abs(_reorderAxisMax - r0) > 1e-6
+            || Math.Abs(_qpAxisMinEased - qMin0) > 1e-6
+            || Math.Abs(_qpAxisMaxEased - qMax0) > 1e-6;
+
+        // 3) 仅在有变化时才显式触发 measure（静默集合不发集合通知）：
+        //    播放时播放头每帧移动 → 持续更新；暂停且缓动收敛后则完全静止、不空转重画。
+        if (newData || playheadMoved || axisChanged)
+        {
+            RequestChartsUpdate();
+        }
     }
 
     /// <summary>
@@ -1383,6 +1531,21 @@ public sealed partial class MainViewModel
         _qpBarCenter = 0;
         _gopMarkerHeight = 10;
         _gopKeyFrameMarkerHeight = 0;
+
+        // 量程缓动状态一并复位，避免切换片源后旧量程残留导致首帧缩放跳变
+        _bitrateAxisMax = 1;
+        _motionAxisMax = 1;
+        _gopAxisMax = 1;
+        _reorderAxisMax = 1;
+        _qpAxisMinEased = 0;
+        _qpAxisMaxEased = 1;
+        _qpAxisMin = 0;
+        _qpAxisMax = 1;
+
+        // 平滑播放头复位：下一帧重新锚定到真实时钟，避免残留旧片源的时间造成首帧错移
+        _smoothPlayhead = -1;
+        _lastChartPlayhead = -1;
+
         UpdateTimelineWindow(0);
         RequestChartsUpdate();
     }

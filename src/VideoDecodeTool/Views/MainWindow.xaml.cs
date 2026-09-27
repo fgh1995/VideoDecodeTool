@@ -234,9 +234,13 @@ public partial class MainWindow : Window
         // 之前是「绘图区左边缘 + 宽度 × 0.5」几何推算的，与引擎实际的坐标排布之间存在
         // 系统性偏差（实测反馈：总差一格）。ScaleDataToPixels 就是渲染时用的那套映射，
         // 用它算出来的位置与柱子必然一致。
-        var playheadInChart = _viewModel.CurrentFrame is { } playheadFrame
+        // 注意：这里用「已指数平滑的图表播放头」而不是原始解码帧时间，否则竖线会跟着
+        // 阶梯式前进的时钟逐帧跳变，而柱状图在用平滑值匀速滚动 —— 两者各跳各的，
+        // 看上去就是播放线在左右抖。
+        var playheadSeconds = _viewModel.ChartPlayheadSeconds;
+        var playheadInChart = double.IsFinite(playheadSeconds) && playheadSeconds >= 0
             ? chart.ScaleDataToPixels(
-                new LvcPointD((double)TimeSpan.FromSeconds(Math.Max(0, playheadFrame.Time)).Ticks, 0),
+                new LvcPointD((double)TimeSpan.FromSeconds(Math.Max(0, playheadSeconds)).Ticks, 0),
                 0,
                 0).X
             : double.NaN;
@@ -310,6 +314,10 @@ public partial class MainWindow : Window
     /// </remarks>
     private void OnChartRendering(object? sender, EventArgs e)
     {
+        // 每个显示帧只驱动一次图表：搬运数据 + 滑动窗口 + measure，与屏幕刷新同拍。
+        // 内部自带脏检查，静止（暂停且缓动收敛、无新数据）时不会空转重画。
+        _viewModel.RenderCharts();
+
         var repainted = false;
 
         foreach (var canvas in _chartCanvases)

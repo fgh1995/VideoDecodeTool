@@ -1938,23 +1938,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             CurrentFrame = frame.Info;
 
-            // 时间轴窗口随当前帧向左滑动（播放头始终停在窗口正中）
-            UpdateTimelineWindow(frame.Info.Time);
             RequestPreviewRepaint();
         }
 
         // 播放头处的时间读数跟着帧刷新：只靠 1Hz 统计定时器的话，播放头上的时间会一秒一跳
         PositionText = FormatTime(ResolveDisplayPosition(pipeline));
 
-        // 逐帧把采样点搬入图表：滑动窗口是逐帧推进的，
-        // 若只在 1Hz 统计定时器里搬运，最新 1 秒会周期性留空再整批弹出。
-        PumpChartSamples();
-
-        // ⚠ 每 tick 末尾无条件显式触发图表 measure（静默集合不发集合通知，
-        // LiveCharts 的自动更新通路已关闭）：即使本 tick 没有新采样点，
-        // 时间轴窗口也随主时钟连续滑动，9 条 X 轴上下限每 tick 都在变。
-        // Throttling=false 走 ForceCall，没有 8ms 的 Task.Delay 续体，重画节拍不再抖。
-        RequestChartsUpdate();
+        // ⚠ 图表的「搬运采样点 + 滑动时间轴窗口 + 触发 measure」已统一移到
+        // 视图的 CompositionTarget.Rendering（每显示帧一次）里执行（见 RenderCharts）：
+        // 这样图表更新与屏幕刷新严格同拍，既消除了 15ms 定时器与刷新率不同步造成的抖动，
+        // 也用连续时钟位置驱动窗口匀速滚动，不再「只在取到新解码帧时才跳一下」。
 
         if (pipeline.IsEndOfStream && pipeline.QueuedFrameCount == 0)
         {
