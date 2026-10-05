@@ -93,3 +93,5 @@ VideoDecodeTool.exe  D:\movie.mp4
 ## 七、反馈
 
 运行库缺失、编码器异常等情况会在窗口底部状态栏给出提示；如遇崩溃，可将现象与片源信息反馈给维护者。
+# 赞助二维码：
+<img width="1242" height="1692" alt="mm_facetoface_collect_qrcode_1791196704492" src="https://github.360967.xyz/https://github.com/user-attachments/assets/d40e4173-e9a3-4cf7-bde9-d6c9b077847b" />
