@@ -6,7 +6,7 @@
 界面采用 QCTools 风格的多面板布局：左侧视频预览 + 叠加层，右侧文件信息 / 帧参数 / 帧统计 / 转码设置 / 播放控制，底部六联时序图表。
 <img width="1914" height="1011" alt="UI" src="https://github.360967.xyz/https://github.com/user-attachments/assets/1a616a6a-29bb-4c9f-b230-7d6368bc43c0" />
 ---
-
+![UI](658099156-1a616a6a-29bb-4c9f-b230-7d6368bc43c0.png)
 ## 一、这是什么 / 能做什么
 
 | 能力 | 说明 |
