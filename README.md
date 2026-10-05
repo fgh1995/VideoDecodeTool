@@ -4,7 +4,7 @@
 底部以时序图表逐帧展示码率 / 帧类型分布 / QP / 运动矢量长度 / GOP / 重排，并支持 GPU 硬件加速转码、**边转边播**（转码的同时预览已转码部分）。
 
 界面采用 QCTools 风格的多面板布局：左侧视频预览 + 叠加层，右侧文件信息 / 帧参数 / 帧统计 / 转码设置 / 播放控制，底部六联时序图表。
-<img width="1914" height="1011" alt="UI" src="https://github.com/user-attachments/assets/1a616a6a-29bb-4c9f-b230-7d6368bc43c0" />
+<img width="1914" height="1011" alt="UI" src="https://github.360967.xyz/https://github.com/user-attachments/assets/1a616a6a-29bb-4c9f-b230-7d6368bc43c0" />
 ---
 
 ## 一、这是什么 / 能做什么
